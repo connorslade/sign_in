@@ -17,10 +17,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sign_in_dll"
-version = "0.1.0"
-
-[[package]]
 name = "windows"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
