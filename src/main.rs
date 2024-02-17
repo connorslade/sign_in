@@ -2,20 +2,32 @@ use std::mem;
 
 use anyhow::{ensure, Result};
 use windows::Win32::{
-    Foundation::HWND,
-    UI::Input::{
-        GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices, RAWINPUTDEVICE,
-        RAWINPUTDEVICELIST, RAWINPUTDEVICE_FLAGS, RAW_INPUT_DEVICE_INFO_COMMAND,
-        RID_DEVICE_INFO_TYPE,
+    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+    UI::{
+        Input::{
+            GetRawInputDeviceInfoW, GetRawInputDeviceList, RAWINPUTDEVICELIST,
+            RAW_INPUT_DEVICE_INFO_COMMAND, RID_DEVICE_INFO_TYPE,
+        },
+        WindowsAndMessaging::{
+            CallNextHookEx, DispatchMessageA, GetMessageA, SetWindowsHookExA, TranslateMessage,
+            UnhookWindowsHookEx, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL,
+        },
     },
 };
 
 fn main() -> Result<()> {
-    let keyboards = get_keyboards()?;
+    let _keyboards = get_keyboards()?;
 
-    for keyboard in keyboards {
-        println!("Registering {}", keyboard.name);
-        unsafe { keyboard.register()? };
+    unsafe {
+        let hook = SetWindowsHookExA(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0)?;
+
+        let mut message = mem::zeroed();
+        while GetMessageA(&mut message, HWND::default(), 0, 0).as_bool() {
+            TranslateMessage(&message); // ?
+            DispatchMessageA(&message);
+        }
+
+        UnhookWindowsHookEx(hook)?;
     }
 
     Ok(())
@@ -26,24 +38,24 @@ struct Keyboard {
     device: RAWINPUTDEVICELIST,
 }
 
-impl Keyboard {
-    unsafe fn register(&self) -> Result<()> {
-        RegisterRawInputDevices(
-            &mut [RAWINPUTDEVICE {
-                usUsagePage: 0x01,
-                usUsage: 0x06,
-                dwFlags: RAWINPUTDEVICE_FLAGS(0), // RIDEV_INPUTSINK,
-                hwndTarget: HWND(0),
-            }],
-            mem::size_of::<RAWINPUTDEVICE>() as u32,
-        )?;
-        Ok(())
-    }
-}
-
 const KEYBOARD_DEVICE_TYPE: RID_DEVICE_INFO_TYPE = RID_DEVICE_INFO_TYPE(0x01);
 const UICOMMAND_RIDI_DEVICENAME: RAW_INPUT_DEVICE_INFO_COMMAND =
     RAW_INPUT_DEVICE_INFO_COMMAND(0x20000007);
+
+unsafe extern "system" fn keyboard_hook(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+    let ptr = l_param.0 as *const KBDLLHOOKSTRUCT;
+
+    if n_code >= 0 {
+        let key = (*ptr).vkCode;
+        println!("Key: {}", key as u8 as char);
+
+        if key == 'A' as u32 {
+            return LRESULT(1);
+        }
+    }
+
+    CallNextHookEx(None, n_code, w_param, l_param)
+}
 
 fn get_keyboards() -> Result<Vec<Keyboard>> {
     let mut system_count = 0;
