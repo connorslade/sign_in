@@ -2,14 +2,15 @@ use std::{
     ffi::{c_void, OsStr},
     mem,
     os::windows::ffi::OsStrExt,
+    thread,
 };
 
 use anyhow::{ensure, Context, Result};
 use windows::{
-    core::PCWSTR,
+    core::{PCSTR, PCWSTR},
     Win32::{
-        Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
-        System::LibraryLoader::GetModuleHandleW,
+        Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
+        System::{Diagnostics::Debug::OutputDebugStringA, LibraryLoader::GetModuleHandleW},
         UI::{
             Input::{
                 GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList,
@@ -19,8 +20,9 @@ use windows::{
             },
             WindowsAndMessaging::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageA,
-                GetMessageA, RegisterClassExW, CW_USEDEFAULT, KBDLLHOOKSTRUCT, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WM_INPUT, WM_KEYDOWN, WNDCLASSEXW,
+                GetMessageA, RegisterClassExW, SetWindowsHookExA, UnhookWindowsHookEx,
+                CW_USEDEFAULT, MSG, WH_KEYBOARD, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT,
+                WM_KEYDOWN, WNDCLASSEXW,
             },
         },
     },
@@ -32,16 +34,18 @@ fn main() -> Result<()> {
         println!("[{:?}]: {}", keyboard.device.hDevice, keyboard.name);
     }
 
-    // unsafe {
-    //     let hook = SetWindowsHookExA(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0)?;
+    // Handle these errors
+    thread::spawn::<_, Result<()>>(|| unsafe {
+        let hook = SetWindowsHookExA(WH_KEYBOARD, Some(keyboard_hook), None, 0)?;
 
-    //     let mut message = mem::zeroed();
-    //     while GetMessageA(&mut message, HWND::default(), 0, 0).as_bool() {
-    //         DispatchMessageA(&message);
-    //     }
+        let mut message = MSG::default();
+        while GetMessageA(&mut message, HWND::default(), 0, 0).as_bool() {
+            DispatchMessageA(&message);
+        }
 
-    //     UnhookWindowsHookEx(hook)?;
-    // }
+        UnhookWindowsHookEx(hook)?;
+        Ok(())
+    });
 
     let hwnd = init_window()?;
 
@@ -55,7 +59,7 @@ fn main() -> Result<()> {
     unsafe { RegisterRawInputDevices(&[dev], mem::size_of::<RAWINPUTDEVICE>() as u32)? };
 
     unsafe {
-        let mut message = mem::zeroed();
+        let mut message = MSG::default();
         while GetMessageA(&mut message, hwnd, 0, 0).as_bool() {
             DispatchMessageA(&message);
         }
@@ -76,17 +80,12 @@ const UICOMMAND_RIDI_DEVICENAME: RAW_INPUT_DEVICE_INFO_COMMAND =
     RAW_INPUT_DEVICE_INFO_COMMAND(0x20000007);
 
 unsafe extern "system" fn keyboard_hook(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    let ptr = l_param.0 as *const KBDLLHOOKSTRUCT;
+    // let ptr = l_param.0 as *const KBDLLHOOKSTRUCT;
 
     if n_code >= 0 {
-        let key = (*ptr).vkCode;
-        if w_param.0 == WM_KEYDOWN as usize {
-            println!("Key: {}", key as u8 as char);
-        }
-
-        if key == 'A' as u32 {
-            return LRESULT(1);
-        }
+        // if w_param.0 == WM_KEYDOWN as usize {
+        println!("Key: {}", w_param.0 as u8 as char);
+        // }
     }
 
     CallNextHookEx(None, n_code, w_param, l_param)
@@ -155,7 +154,7 @@ fn init_window() -> Result<HWND> {
     let mut wnd = WNDCLASSEXW::default();
     wnd.cbSize = mem::size_of::<WNDCLASSEXW>() as u32;
     wnd.lpfnWndProc = Some(window_proc);
-    wnd.hInstance = HINSTANCE(hinstance.0);
+    wnd.hInstance = hinstance.into();
     wnd.lpszClassName = PCWSTR(class_name.as_ptr());
 
     let reg = unsafe { RegisterClassExW(&wnd) };
@@ -219,7 +218,15 @@ unsafe extern "system" fn window_proc(
             {
                 let device = (*input).header.hDevice;
                 let key = (*input).data.keyboard.VKey as u8 as char;
-                println!("[{:?}]: {}", device, key);
+                let extra = (*input).data.keyboard.ExtraInformation;
+                println!("[{:?}]: {} - extra: {}", device, key, extra);
+
+                let str = OsStr::new(&format!("[{:?}]: {} - extra: {}", device, key, extra))
+                    .encode_wide()
+                    .chain(Some(0))
+                    .map(|x| x as u8)
+                    .collect::<Vec<_>>();
+                OutputDebugStringA(PCSTR::from_raw(str.as_ptr()));
             }
 
             LRESULT(0)
