@@ -1,16 +1,23 @@
-use std::mem;
+use std::{ffi::OsStr, mem, os::windows::ffi::OsStrExt};
 
-use anyhow::{ensure, Result};
-use windows::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
-    UI::{
-        Input::{
-            GetRawInputDeviceInfoW, GetRawInputDeviceList, RAWINPUTDEVICELIST,
-            RAW_INPUT_DEVICE_INFO_COMMAND, RID_DEVICE_INFO_TYPE,
-        },
-        WindowsAndMessaging::{
-            CallNextHookEx, DispatchMessageA, GetMessageA, SetWindowsHookExA, TranslateMessage,
-            UnhookWindowsHookEx, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL,
+use anyhow::{ensure, Context, Result};
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        System::LibraryLoader::GetModuleHandleW,
+        UI::{
+            Input::{
+                GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices,
+                RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAW_INPUT_DEVICE_INFO_COMMAND, RIDEV_INPUTSINK,
+                RID_DEVICE_INFO_TYPE,
+            },
+            WindowsAndMessaging::{
+                CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageA,
+                GetMessageA, RegisterClassExW, SetWindowsHookExA, UnhookWindowsHookEx,
+                CW_USEDEFAULT, HWND_MESSAGE, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
+                WINDOW_STYLE, WM_INPUT, WM_KEYDOWN, WNDCLASSA, WNDCLASSEXW,
+            },
         },
     },
 };
@@ -18,17 +25,36 @@ use windows::Win32::{
 fn main() -> Result<()> {
     let _keyboards = get_keyboards()?;
 
-    unsafe {
-        let hook = SetWindowsHookExA(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0)?;
+    // unsafe {
+    //     let hook = SetWindowsHookExA(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0)?;
 
+    //     let mut message = mem::zeroed();
+    //     while GetMessageA(&mut message, HWND::default(), 0, 0).as_bool() {
+    //         DispatchMessageA(&message);
+    //     }
+
+    //     UnhookWindowsHookEx(hook)?;
+    // }
+
+    let hwnd = init_window()?;
+
+    let dev = RAWINPUTDEVICE {
+        usUsagePage: 0x01,
+        usUsage: 0x06,
+        dwFlags: RIDEV_INPUTSINK,
+        hwndTarget: hwnd,
+    };
+
+    unsafe { RegisterRawInputDevices(&[dev], mem::size_of::<RAWINPUTDEVICE>() as u32)? };
+
+    unsafe {
         let mut message = mem::zeroed();
-        while GetMessageA(&mut message, HWND::default(), 0, 0).as_bool() {
-            TranslateMessage(&message); // ?
+        while GetMessageA(&mut message, hwnd, 0, 0).as_bool() {
             DispatchMessageA(&message);
         }
-
-        UnhookWindowsHookEx(hook)?;
     }
+
+    unsafe { DestroyWindow(hwnd)? };
 
     Ok(())
 }
@@ -47,7 +73,9 @@ unsafe extern "system" fn keyboard_hook(n_code: i32, w_param: WPARAM, l_param: L
 
     if n_code >= 0 {
         let key = (*ptr).vkCode;
-        println!("Key: {}", key as u8 as char);
+        if w_param.0 == WM_KEYDOWN as usize {
+            println!("Key: {}", key as u8 as char);
+        }
 
         if key == 'A' as u32 {
             return LRESULT(1);
@@ -107,4 +135,60 @@ fn get_keyboards() -> Result<Vec<Keyboard>> {
     }
 
     Ok(out)
+}
+
+fn init_window() -> Result<HWND> {
+    let class_name = OsStr::new("SignIn")
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+
+    let hinstance = unsafe { GetModuleHandleW(None)? };
+
+    let mut wnd = WNDCLASSEXW::default();
+    wnd.cbSize = mem::size_of::<WNDCLASSEXW>() as u32;
+    wnd.lpfnWndProc = Some(window_proc);
+    wnd.hInstance = HINSTANCE(hinstance.0);
+    wnd.lpszClassName = PCWSTR(class_name.as_ptr());
+
+    let reg = unsafe { RegisterClassExW(&wnd) };
+    ensure!(reg != 0, "Error registering window class");
+
+    let window = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            PCWSTR(class_name.as_ptr()),
+            None,
+            WINDOW_STYLE(0),
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            None,
+            None,
+            hinstance,
+            None,
+        )
+    };
+
+    unsafe { GetLastError().context(window.0)? };
+
+    ensure!(window.0 != 0, "Error creating window");
+
+    Ok(window)
+}
+
+unsafe extern "system" fn window_proc(
+    hwnd: HWND,
+    msg: u32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    match msg {
+        WM_INPUT => {
+            println!("WM_INPUT");
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, w_param, l_param),
+    }
 }
