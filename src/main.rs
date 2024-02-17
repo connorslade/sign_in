@@ -1,4 +1,8 @@
-use std::{ffi::OsStr, mem, os::windows::ffi::OsStrExt};
+use std::{
+    ffi::{c_void, OsStr},
+    mem,
+    os::windows::ffi::OsStrExt,
+};
 
 use anyhow::{ensure, Context, Result};
 use windows::{
@@ -8,22 +12,25 @@ use windows::{
         System::LibraryLoader::GetModuleHandleW,
         UI::{
             Input::{
-                GetRawInputDeviceInfoW, GetRawInputDeviceList, RegisterRawInputDevices,
-                RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAW_INPUT_DEVICE_INFO_COMMAND, RIDEV_INPUTSINK,
-                RID_DEVICE_INFO_TYPE,
+                GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList,
+                RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE, RAWINPUTDEVICELIST,
+                RAWINPUTHEADER, RAW_INPUT_DEVICE_INFO_COMMAND, RIDEV_INPUTSINK,
+                RID_DEVICE_INFO_TYPE, RID_INPUT, RIM_TYPEKEYBOARD,
             },
             WindowsAndMessaging::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageA,
-                GetMessageA, RegisterClassExW, SetWindowsHookExA, UnhookWindowsHookEx,
-                CW_USEDEFAULT, HWND_MESSAGE, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WM_INPUT, WM_KEYDOWN, WNDCLASSA, WNDCLASSEXW,
+                GetMessageA, RegisterClassExW, CW_USEDEFAULT, KBDLLHOOKSTRUCT, WINDOW_EX_STYLE,
+                WINDOW_STYLE, WM_INPUT, WM_KEYDOWN, WNDCLASSEXW,
             },
         },
     },
 };
 
 fn main() -> Result<()> {
-    let _keyboards = get_keyboards()?;
+    let keyboards = get_keyboards()?;
+    for keyboard in keyboards {
+        println!("[{:?}]: {}", keyboard.device.hDevice, keyboard.name);
+    }
 
     // unsafe {
     //     let hook = SetWindowsHookExA(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0)?;
@@ -186,7 +193,35 @@ unsafe extern "system" fn window_proc(
 ) -> LRESULT {
     match msg {
         WM_INPUT => {
-            println!("WM_INPUT");
+            let mut size = 0;
+            let result = GetRawInputData(
+                HRAWINPUT(l_param.0),
+                RID_INPUT,
+                None,
+                &mut size,
+                mem::size_of::<RAWINPUTHEADER>() as u32,
+            );
+            assert_eq!(result as i32, 0);
+
+            let mut data = vec![0u8; size as usize];
+            let result = GetRawInputData(
+                HRAWINPUT(l_param.0),
+                RID_INPUT,
+                Some(data.as_mut_ptr() as *mut c_void),
+                &mut size,
+                mem::size_of::<RAWINPUTHEADER>() as u32,
+            );
+            assert_eq!(result as i32, size as i32);
+
+            let input = &*(data.as_ptr() as *const RAWINPUT);
+            if (*input).header.dwType == RIM_TYPEKEYBOARD.0
+                && (*input).data.keyboard.Message == WM_KEYDOWN as u32
+            {
+                let device = (*input).header.hDevice;
+                let key = (*input).data.keyboard.VKey as u8 as char;
+                println!("[{:?}]: {}", device, key);
+            }
+
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, w_param, l_param),
