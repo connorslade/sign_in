@@ -6,10 +6,10 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use windows::{
-    core::{PCSTR, PCWSTR},
+    core::PCWSTR,
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
-        System::{Diagnostics::Debug::OutputDebugStringA, LibraryLoader::GetModuleHandleW},
+        System::LibraryLoader::GetModuleHandleW,
         UI::{
             Input::{
                 GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList,
@@ -42,16 +42,16 @@ fn main() -> Result<()> {
         hwndTarget: hwnd,
     };
 
-    unsafe { RegisterRawInputDevices(&[dev], mem::size_of::<RAWINPUTDEVICE>() as u32)? };
-
     unsafe {
+        RegisterRawInputDevices(&[dev], mem::size_of::<RAWINPUTDEVICE>() as u32)?;
+
         let mut message = MSG::default();
         while GetMessageA(&mut message, hwnd, 0, 0).as_bool() {
             DispatchMessageA(&message);
         }
-    }
 
-    unsafe { DestroyWindow(hwnd)? };
+        DestroyWindow(hwnd)?;
+    }
 
     Ok(())
 }
