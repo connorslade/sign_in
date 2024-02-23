@@ -1,10 +1,12 @@
 use std::{
     ffi::{c_void, OsStr},
+    io::Read,
     mem,
     os::windows::ffi::OsStrExt,
 };
 
 use anyhow::{ensure, Context, Result};
+use dll_syringe::{process::OwnedProcess, Syringe};
 use windows::{
     core::PCWSTR,
     Win32::{
@@ -33,25 +35,39 @@ fn main() -> Result<()> {
         println!("[{:?}]: {}", keyboard.device.hDevice, keyboard.name);
     }
 
-    let hwnd = init_window()?;
+    println!("Injecting in 5 seconds");
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    println!("Injecting");
 
-    let dev = RAWINPUTDEVICE {
-        usUsagePage: 0x01,
-        usUsage: 0x06,
-        dwFlags: RIDEV_INPUTSINK,
-        hwndTarget: hwnd,
-    };
+    let process = OwnedProcess::find_first_by_name("notepad.exe").unwrap();
+    let syringe = Syringe::for_process(process);
+    let module = syringe
+        .inject(r"V:\Programming\Projects\sign_in\target\debug\sign_in_lib.dll")
+        .unwrap();
 
-    unsafe {
-        RegisterRawInputDevices(&[dev], mem::size_of::<RAWINPUTDEVICE>() as u32)?;
+    let _ = std::io::stdin().read(&mut [0u8]).unwrap();
 
-        let mut message = MSG::default();
-        while GetMessageA(&mut message, hwnd, 0, 0).as_bool() {
-            DispatchMessageA(&message);
-        }
+    syringe.eject(module).unwrap();
 
-        DestroyWindow(hwnd)?;
-    }
+    // let hwnd = init_window()?;
+
+    // let dev = RAWINPUTDEVICE {
+    //     usUsagePage: 0x01,
+    //     usUsage: 0x06,
+    //     dwFlags: RIDEV_INPUTSINK,
+    //     hwndTarget: hwnd,
+    // };
+
+    // unsafe {
+    //     RegisterRawInputDevices(&[dev], mem::size_of::<RAWINPUTDEVICE>() as u32)?;
+
+    //     let mut message = MSG::default();
+    //     while GetMessageA(&mut message, hwnd, 0, 0).as_bool() {
+    //         DispatchMessageA(&message);
+    //     }
+
+    //     DestroyWindow(hwnd)?;
+    // }
 
     Ok(())
 }

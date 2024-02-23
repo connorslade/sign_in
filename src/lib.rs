@@ -2,7 +2,7 @@
 
 use std::iter;
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use windows::{
     core::PCSTR,
     Win32::{
@@ -11,10 +11,9 @@ use windows::{
             Diagnostics::Debug::OutputDebugStringA,
             ProcessStatus::GetProcessImageFileNameA,
             SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH},
-            Threading::GetCurrentThreadId,
         },
         UI::WindowsAndMessaging::{
-            CallNextHookEx, SetWindowsHookExA, UnhookWindowsHookEx, HHOOK, WH_KEYBOARD,
+            CallNextHookEx, GetForegroundWindow, GetWindowLongPtrW, GWL_WNDPROC,
         },
     },
 };
@@ -25,8 +24,6 @@ macro_rules! log {
         OutputDebugStringA(PCSTR(msg.as_ptr()));
     }};
 }
-
-static mut HOOK: Option<HHOOK> = None;
 
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
@@ -53,25 +50,24 @@ unsafe extern "system" fn DllMain(
 
     if let Err(err) = result {
         log!("Error: {err}");
+        log!("Backtrace: {}", err.backtrace());
     }
 
     true
 }
 
 unsafe fn process_attach() -> Result<()> {
-    let thread = GetCurrentThreadId();
-    log!("Using thread id: {thread:?}");
-    let hook = SetWindowsHookExA(WH_KEYBOARD, Some(keyboard_hook), None, thread)?;
-    HOOK = Some(hook);
+    let window = GetForegroundWindow();
+    log!("Window Handle: {window:?}");
+
+    let window_proc = GetWindowLongPtrW(window, GWL_WNDPROC);
+    ensure!(window_proc != 0, "Error getting window procedure");
+    log!("Window Proc: {window_proc:x}");
 
     Ok(())
 }
 
 unsafe fn process_detach() -> Result<()> {
-    if let Some(hook) = HOOK {
-        UnhookWindowsHookEx(hook)?;
-    }
-
     Ok(())
 }
 
