@@ -2,7 +2,6 @@ use std::{
     ffi::{c_void, OsStr},
     mem,
     os::windows::ffi::OsStrExt,
-    thread,
 };
 
 use anyhow::{ensure, Context, Result};
@@ -19,9 +18,8 @@ use windows::{
                 RID_DEVICE_INFO_TYPE, RID_INPUT, RIM_TYPEKEYBOARD,
             },
             WindowsAndMessaging::{
-                CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageA,
-                GetMessageA, RegisterClassExW, SetWindowsHookExA, UnhookWindowsHookEx,
-                CW_USEDEFAULT, MSG, WH_KEYBOARD, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT,
+                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageA, GetMessageA,
+                RegisterClassExW, CW_USEDEFAULT, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT,
                 WM_KEYDOWN, WNDCLASSEXW,
             },
         },
@@ -30,22 +28,10 @@ use windows::{
 
 fn main() -> Result<()> {
     let keyboards = get_keyboards()?;
+    print!("Keyboards: ");
     for keyboard in keyboards {
         println!("[{:?}]: {}", keyboard.device.hDevice, keyboard.name);
     }
-
-    // Handle these errors
-    thread::spawn::<_, Result<()>>(|| unsafe {
-        let hook = SetWindowsHookExA(WH_KEYBOARD, Some(keyboard_hook), None, 0)?;
-
-        let mut message = MSG::default();
-        while GetMessageA(&mut message, HWND::default(), 0, 0).as_bool() {
-            DispatchMessageA(&message);
-        }
-
-        UnhookWindowsHookEx(hook)?;
-        Ok(())
-    });
 
     let hwnd = init_window()?;
 
@@ -78,18 +64,6 @@ struct Keyboard {
 const KEYBOARD_DEVICE_TYPE: RID_DEVICE_INFO_TYPE = RID_DEVICE_INFO_TYPE(0x01);
 const UICOMMAND_RIDI_DEVICENAME: RAW_INPUT_DEVICE_INFO_COMMAND =
     RAW_INPUT_DEVICE_INFO_COMMAND(0x20000007);
-
-unsafe extern "system" fn keyboard_hook(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-    // let ptr = l_param.0 as *const KBDLLHOOKSTRUCT;
-
-    if n_code >= 0 {
-        // if w_param.0 == WM_KEYDOWN as usize {
-        println!("Key: {}", w_param.0 as u8 as char);
-        // }
-    }
-
-    CallNextHookEx(None, n_code, w_param, l_param)
-}
 
 fn get_keyboards() -> Result<Vec<Keyboard>> {
     let mut system_count = 0;
@@ -218,15 +192,7 @@ unsafe extern "system" fn window_proc(
             {
                 let device = (*input).header.hDevice;
                 let key = (*input).data.keyboard.VKey as u8 as char;
-                let extra = (*input).data.keyboard.ExtraInformation;
-                println!("[{:?}]: {} - extra: {}", device, key, extra);
-
-                let str = OsStr::new(&format!("[{:?}]: {} - extra: {}", device, key, extra))
-                    .encode_wide()
-                    .chain(Some(0))
-                    .map(|x| x as u8)
-                    .collect::<Vec<_>>();
-                OutputDebugStringA(PCSTR::from_raw(str.as_ptr()));
+                println!("[{:?}]: {}", device, key);
             }
 
             LRESULT(0)
