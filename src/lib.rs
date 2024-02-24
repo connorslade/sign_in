@@ -82,7 +82,7 @@ static mut OLD_HOOK: Lazy<HashMap<isize, WNDPROC>> = Lazy::new(|| HashMap::new()
 
 unsafe fn process_attach() -> Result<()> {
     let window = GetForegroundWindow();
-    // inject_window(window)?;
+    inject_window(window)?;
 
     unsafe extern "system" fn child_window_callback(hwnd: HWND, _: LPARAM) -> BOOL {
         handle_error(inject_window(hwnd));
@@ -134,7 +134,8 @@ unsafe extern "system" fn window_proc_hook(
     w_param: WPARAM,
     l_param: LPARAM,
 ) -> LRESULT {
-    // WM_CHAR and WM_KEYDOWN
+    static mut CANCEL: u16 = 0;
+
     match msg {
         WM_INPUT => {
             let mut size = 0;
@@ -162,21 +163,22 @@ unsafe extern "system" fn window_proc_hook(
                 let device = (*input).header.hDevice;
                 let key = (*input).data.keyboard.VKey as u8 as char;
                 log!("[{:x}] [{:?}]: {}", hwnd.0, device, key);
+
+                if device.0 == -901836307 {
+                    CANCEL = (*input).data.keyboard.MakeCode;
+                } else {
+                    CANCEL = 0;
+                }
             }
 
             return LRESULT(0);
         }
-        WM_KEYDOWN => {
-            log!("[{:x}] WM_KEYDOWN", hwnd.0);
-            return LRESULT(0);
-        }
-        WM_KEYUP => {
-            log!("[{:x}] WM_KEYUP", hwnd.0);
-            return LRESULT(0);
-        }
-        WM_CHAR => {
-            log!("[{:x}] WM_CHAR", hwnd.0);
-            return LRESULT(0);
+        WM_KEYDOWN | WM_KEYUP | WM_CHAR => {
+            let scan_code = (l_param.0 >> 16) as u16;
+            log!("Scan Code: {scan_code:x} Cancel: {CANCEL:x}");
+            if scan_code == CANCEL {
+                return LRESULT(0);
+            }
         }
         _ => {}
     }
